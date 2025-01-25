@@ -1,0 +1,70 @@
+pip install sqlalchemy mysql-connector-python
+
+CREATE DATABASE chatbot_db;
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# Database configuration
+DATABASE_URL = "mysql+mysqlconnector://username:password@localhost:3306/chatbot_db"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=True, bind=engine)
+Base = declarative_base()
+
+# Define database models
+class Supplier(Base):
+    __tablename__ = 'suppliers'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    contact_info = Column(String, nullable=False)
+    product_categories_offered = Column(String, nullable=False)
+
+class Product(Base):
+    __tablename__ = 'products'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    brand = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    category = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+    supplier_id = Column(Integer, ForeignKey('suppliers.id'))
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+# Populate database with sample data
+def populate_database():
+    session = SessionLocal()
+
+    try:
+        # Sample suppliers
+        suppliers = [
+            Supplier(name="Tech Supplies Co.", contact_info="techsupplies@example.com", product_categories_offered="Laptops, Accessories"),
+            Supplier(name="Home Essentials Inc.", contact_info="homeessentials@example.com", product_categories_offered="Furniture, Appliances"),
+            Supplier(name="Gadget World", contact_info="gadgetworld@example.com", product_categories_offered="Mobile Phones, Tablets"),
+        ]
+
+        session.add_all(suppliers)
+        session.commit()
+
+        # Sample products
+        products = [
+            Product(name="UltraBook Pro", brand="TechBrand", price=1200.0, category="Laptops", description="High-performance laptop", supplier_id=1),
+            Product(name="ErgoChair 3000", brand="ComfySeats", price=250.0, category="Furniture", description="Ergonomic office chair", supplier_id=2),
+            Product(name="Smartphone X", brand="GadgetBrand", price=800.0, category="Mobile Phones", description="Latest generation smartphone", supplier_id=3),
+        ]
+
+        session.add_all(products)
+        session.commit()
+
+        print("Database populated with sample data.")
+    except Exception as e:
+        print(f"Error populating database: {e}")
+        session.rollback()
+    finally:
+        session.close()
+
+if __name__ == "__main__":
+    populate_database()

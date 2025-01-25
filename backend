@@ -1,0 +1,108 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+import openai
+from langgraph import Graph, Node
+
+# FastAPI setup
+app = FastAPI()
+
+# Database setup
+DATABASE_URL = "mysql+mysqlconnector://username:password@localhost:3306/chatbot_db"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=True, bind=engine)
+Base = declarative_base()
+
+# Define database models
+class Supplier(Base):
+    __tablename__ = 'suppliers'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    contact_info = Column(String, nullable=False)
+    product_categories_offered = Column(String, nullable=False)
+
+class Product(Base):
+    __tablename__ = 'products'
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    brand = Column(String, nullable=False)
+    price = Column(Float, nullable=False)
+    category = Column(String, nullable=False)
+    description = Column(String, nullable=False)
+    supplier_id = Column(Integer, ForeignKey('suppliers.id'))
+    supplier = relationship("Supplier", back_populates="products")
+
+Supplier.products = relationship("Product", order_by=Product.id, back_populates="supplier")
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+# LangGraph setup
+class QueryNode(Node):
+    def run(self, query: str, db_session):
+        try:
+            # Basic query handling
+            if "products under brand" in query:
+                brand = query.split("brand")[-1].strip()
+                products = db_session.query(Product).filter(Product.brand == brand).all()
+                return [
+                    {
+                        "name": product.name,
+                        "price": product.price,
+                        "category": product.category,
+                    }
+                    for product in products
+                ]
+            elif "suppliers provide" in query:
+                category = query.split("provide")[-1].strip()
+                suppliers = db_session.query(Supplier).filter(Supplier.product_categories_offered.like(f"%{category}%")).all()
+                return [supplier.name for supplier in suppliers]
+            else:
+                raise ValueError("Query not supported.")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+class SummarizeNode(Node):
+    def run(self, data):
+        try:
+            openai.api_key = "your-openai-api-key"
+            response = openai.Completion.create(
+                engine="gpt-3.5-turbo",
+                prompt=f"Summarize the following supplier data:\n{data}",
+                max_tokens=100,
+            )
+            return response.choices[0].text.strip()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"LLM summarization failed: {str(e)}")
+
+# Graph setup
+graph = Graph()
+query_node = QueryNode()
+summarize_node = SummarizeNode()
+
+graph.add_node("query", query_node)
+graph.add_node("summarize", summarize_node)
+
+graph.connect("query", "summarize")
+
+# API models
+class QueryRequest(BaseModel):
+    query: str
+
+# API endpoint
+@app.post("/api/query")
+def query_endpoint(request: QueryRequest):
+    db_session = SessionLocal()
+    try:
+        # Run query through graph
+        data = graph.run("query", query=request.query, db_session=db_session)
+        summarized_data = graph.run("summarize", data=data)
+        return {"response": summarized_data}
+    except HTTPException as e:
+        raise e
+    finally:
+        db_session.close()
